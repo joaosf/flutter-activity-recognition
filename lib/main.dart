@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:async';
-import 'dart:async';
-import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:io';
 
+import 'package:cron/cron.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -23,6 +21,17 @@ class ExampleApp extends StatefulWidget {
 class _ExampleAppState extends State<ExampleApp> {
   final _activityStreamController = StreamController<Activity>();
   StreamSubscription<Activity>? _activityStreamSubscription;
+  List<Map> listOffline = [];
+  final cron = new Cron();
+
+  static FutureOr<bool> getConnectionStatus() async {
+    try {
+      final result = await InternetAddress.lookup('example.com');
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } on SocketException catch (_) {
+      return false;
+    }
+  }
 
   static FutureOr<String?> getDeviceIdentifier() async {
     String? deviceName;
@@ -67,6 +76,39 @@ class _ExampleAppState extends State<ExampleApp> {
     }
   }
 
+  void solveListOffline() async {
+    print("solveListOffline");
+    if (listOffline.length > 0) {
+      for (final item in listOffline) {
+        await postData(item);
+      }
+      listOffline.clear();
+      clearCron();
+      print("after clear "+listOffline.length.toString());
+    }
+  }
+
+  void addItemOffline(Map data) {
+    print("addItemOffline");
+    listOffline.add(data);
+    startCron();
+    print(listOffline.length);
+  }
+
+  void clearCron() {
+    cron.close();
+  }
+
+  void startCron() {
+    cron.schedule(new Schedule.parse('*/2 * * * *'), () async {
+      print('every 2 minute');
+      bool isConnected = await getConnectionStatus();
+      if (isConnected) {
+        solveListOffline();
+      }
+    });
+  }
+
   FutureOr<void> _onActivityReceive(Activity activity) async {
     dev.log('Activity Detected >> ${activity.toJson()}');
     _activityStreamController.sink.add(activity);
@@ -76,6 +118,8 @@ class _ExampleAppState extends State<ExampleApp> {
     String long = position.longitude.toString();
     String lat = position.latitude.toString();
     String alt = position.altitude.toString();
+
+    bool isConnected = await getConnectionStatus();
 
     var dataToPost = {
       "geo": {
@@ -87,11 +131,20 @@ class _ExampleAppState extends State<ExampleApp> {
         "type": activity.type.toString(),
         "confidence": activity.confidence.toString(),
       },
-      "date": DateTime.now().toString()
+      "date": DateTime.now().toString(),
+      "connected": isConnected.toString(),
     };
 
     print(dataToPost);
-    await postData(dataToPost);
+
+    print({isConnected});
+    if (isConnected) {
+      solveListOffline();
+      await postData(dataToPost);
+    } else {
+      addItemOffline(dataToPost);
+    }
+
   }
 
   void _handleError(dynamic error) {
